@@ -1,0 +1,53 @@
+name: Deploy Azure Data Factory with UAMI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'MyADF/**'
+
+jobs:
+  deploy-adf:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Azure Login using UAMI
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}   # This is your UAMI's client ID
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+
+    - name: Install ADF ARMTemplateGenerator
+      run: |
+        git clone https://github.com/Azure/Azure-DataFactory-Utilities.git
+        cd Azure-DataFactory-Utilities/ARMTemplateGenerator
+        npm install
+
+    - name: Export ADF ARM Templates
+      run: |
+        cd Azure-DataFactory-Utilities/ARMTemplateGenerator
+        node index.js \
+          --rootFolder "${{ github.workspace }}/MyADF" \
+          --outputFolder "${{ github.workspace }}/exported-arm" \
+          --factoryName "${{ secrets.ADF_NAME }}" \
+          --resourceGroup "${{ secrets.RESOURCE_GROUP }}" \
+          --subscriptionId "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+          --region "${{ secrets.ADF_REGION }}"
+
+    - name: Deploy ARM Template to Azure
+      run: |
+        az deployment group create \
+          --name "adf-deploy-$(date +%s)" \
+          --resource-group "${{ secrets.RESOURCE_GROUP }}" \
+          --template-file "${{ github.workspace }}/exported-arm/ARMTemplateForFactory.json" \
+          --parameters "@${{ github.workspace }}/exported-arm/ARMTemplateParametersForFactory.json"
