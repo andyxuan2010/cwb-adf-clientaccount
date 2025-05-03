@@ -44,15 +44,16 @@ jobs:
     - name: Patch Main Template with Linked Template URIs (No SAS)
       run: |
         storageUrl="https://${{ secrets.STORAGE_ACCOUNT_NAME }}.blob.core.windows.net/${{ secrets.CONTAINER_NAME }}/LinkedTemplates"
-        jq --arg url "$storageUrl" '
-          .resources |= map(
-            if .type == "Microsoft.Resources/deployments" and .properties.templateLink then
-              .properties.templateLink.uri = ($url + "/" + (.properties.templateLink.uri | split("/") | last))
-            else
-              .
-            end
-          )
-        ' ./Azure-DataFactory-Utilities/ARMTemplateGenerator/adf-arm-output/ARMTemplateForFactory.json > ./main-template-patched.json
+        jq --arg url "https://<yourStorageAccount>.blob.core.windows.net/<yourContainer>/LinkedTemplates" '
+        .resources |= map(
+          if .type == "Microsoft.Resources/deployments" and .properties.templateLink != null then
+            .properties.templateLink.uri = ($url + "/" + (.name) + ".json")
+            | del(.properties.templateLink.contentVersion)  # optional cleanup
+          else
+            .
+          end
+        ) | del(.parameters.containerUri) | del(.parameters.containerSasToken)' \
+        ARMTemplateForFactory.json > PatchedTemplate.json
 
     - name: Deploy Patched Template to Azure
       run: |
