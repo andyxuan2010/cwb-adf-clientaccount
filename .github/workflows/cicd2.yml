@@ -1,1 +1,85 @@
-V
+Vname: Deploy Azure Data Factory with Managed Identity
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  RESOURCE_GROUP_NAME: ${{ secrets.AZURE_RESOURCE_GROUP }}
+  DATA_FACTORY_NAME: ${{ secrets.ADF_NAME }}
+  ENVIRONMENT: prod # or use github.ref_name for branch-based environments
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }} # Client ID of the user-assigned managed identity
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '16.x'
+
+    - name: Install ADF Utilities
+      run: |
+        npm install -g @microsoft/azure-data-factory-utilities
+
+    - name: Login to Azure with Managed Identity
+      uses: azure/login@v1
+      with:
+        client-id: ${{ env.AZURE_CLIENT_ID }}
+        subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Validate ADF artifacts
+      run: |
+        npm run build validate \
+          --subscriptionId $AZURE_SUBSCRIPTION_ID \
+          --resourceGroup $RESOURCE_GROUP_NAME \
+          --factoryName $DATA_FACTORY_NAME \
+          --location region
+
+    - name: Generate ARM templates
+      run: |
+        npm run build export \
+          --subscriptionId $AZURE_SUBSCRIPTION_ID \
+          --resourceGroup $RESOURCE_GROUP_NAME \
+          --factoryName $DATA_FACTORY_NAME \
+          --environment $ENVIRONMENT \
+          --tenantId ${{ secrets.AZURE_TENANT_ID }} \
+          --outputFolder ./arm-templates
+
+    - name: Deploy ARM template with Managed Identity
+      uses: azure/arm-deploy@v1
+      with:
+        subscriptionId: ${{ env.AZURE_SUBSCRIPTION_ID }}
+        resourceGroupName: ${{ env.RESOURCE_GROUP_NAME }}
+        template: ./arm-templates/ARMTemplateForFactory.json
+        parameters: ./arm-templates/ARMTemplateParametersForFactory.json
+        deploymentMode: Incremental
+
+    - name: Publish ADF artifacts using Managed Identity
+      run: |
+        # Configure Azure CLI to use managed identity
+        az login --identity -u $AZURE_CLIENT_ID
+        
+        az config set extension.use_dynamic_install=yes_without_prompt
+        az datafactory factory get-git-hub-access-token \
+          --subscription $AZURE_SUBSCRIPTION_ID \
+          --resource-group $RESOURCE_GROUP_NAME \
+          --name $DATA_FACTORY_NAME \
+          --git-hub-access-code ${{ secrets.GITHUB_TOKEN }} \
+          --git-hub-access-token-base-url "https://api.github.com" \
+          --git-hub-client-id ${{ secrets.GITHUB_CLIENT_ID }}
+
+        az datafactory factory configure-factory-repo \
+          --subscription $AZURE_SUBSCRIPTION_ID \
+          --resource-group $RESOURCE_GROUP_NAME \
+          --factory-name $DATA_FACTORY_NAME \
+          --factory-resource-id "/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP_NAME/providers/Microsoft.DataFactory/factories/$DATA_FACTORY_NAME" \
+          --repo-configuration "{\"type\":\"FactoryGitHubConfiguration\",\"accountName\":\"${{ github.repository_owner }}\",\"repositoryName\":\"${{ github.event.repository.name }}\",\"collaborationBranch\":\"main\",\"rootFolder\":\"/\",\"lastCommitId\":\"${{ github.sha }}\"}"
