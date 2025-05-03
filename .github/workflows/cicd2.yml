@@ -1,4 +1,4 @@
-Vname: Deploy Azure Data Factory with Managed Identity
+name: Deploy Azure Data Factory with Managed Identity
 
 on:
   push:
