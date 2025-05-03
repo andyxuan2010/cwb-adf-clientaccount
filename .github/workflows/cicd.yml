@@ -44,16 +44,19 @@ jobs:
     - name: Patch Main Template with Linked Template URIs (No SAS)
       run: |
         storageUrl="https://${{ secrets.STORAGE_ACCOUNT_NAME }}.blob.core.windows.net/${{ secrets.CONTAINER_NAME }}/LinkedTemplates"
-        jq --arg url "https://<yourStorageAccount>.blob.core.windows.net/<yourContainer>/LinkedTemplates" '
+        sas="${{ secrets.ST_SAS_TOKEN }}"
+        jq --arg url "$url" --arg sas "$sas" '
         .resources |= map(
           if .type == "Microsoft.Resources/deployments" and .properties.templateLink != null then
-            .properties.templateLink.uri = ($url + "/" + (.name) + ".json")
-            | del(.properties.templateLink.contentVersion)  # optional cleanup
+            .properties.templateLink.uri = ($url + "/" + (.name) + ".json" + "?" + $sas)
+            | del(.properties.templateLink.contentVersion)
           else
             .
           end
-        ) | del(.parameters.containerUri) | del(.parameters.containerSasToken)' \
-        ARMTemplateForFactory.json > PatchedTemplate.json
+        )
+        | del(.parameters.containerUri)
+        | del(.parameters.containerSasToken)
+        ' ARMTemplateForFactory.json > PatchedTemplate.json
 
     - name: Deploy Patched Template to Azure
       run: |
