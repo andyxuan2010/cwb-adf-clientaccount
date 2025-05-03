@@ -1,53 +1,62 @@
-name: Deploy Azure Data Factory with UAMI
+name: Deploy ADF with Linked Templates (UAMI-based)
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - 'MyADF/**'
+    branches: [main]
 
 jobs:
   deploy-adf:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
+    - name: Checkout source
       uses: actions/checkout@v3
 
     - name: Azure Login using UAMI
       uses: azure/login@v2
       with:
-        client-id: ${{ secrets.AZURE_CLIENT_ID }}   # This is your UAMI's client ID
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
         tenant-id: ${{ secrets.AZURE_TENANT_ID }}
         subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-    - name: Set up Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '18'
-
-    - name: Install ADF ARMTemplateGenerator
+    - name: Install ADF Template Generator
       run: |
         git clone https://github.com/Azure/Azure-DataFactory-Utilities.git
         cd Azure-DataFactory-Utilities/ARMTemplateGenerator
         npm install
 
-    - name: Export ADF ARM Templates
+    - name: Export ADF Templates
       run: |
         cd Azure-DataFactory-Utilities/ARMTemplateGenerator
-        node index.js \
-          --rootFolder "${{ github.workspace }}/MyADF" \
-          --outputFolder "${{ github.workspace }}/exported-arm" \
-          --factoryName "${{ secrets.ADF_NAME }}" \
-          --resourceGroup "${{ secrets.RESOURCE_GROUP }}" \
-          --subscriptionId "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
-          --region "${{ secrets.ADF_REGION }}"
+        npm run build export \
+          "${{ github.workspace }}/MyADF" \
+          "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ secrets.RESOURCE_GROUP }}/providers/Microsoft.DataFactory/factories/${{ secrets.ADF_NAME }}" \
+          adf-arm-output
 
-    - name: Deploy ARM Template to Azure
+    - name: Upload Linked Templates to Storage Account
+      run: |
+        az storage blob upload-batch \
+          --account-name ${{ secrets.STORAGE_ACCOUNT_NAME }} \
+          --destination ${{ secrets.CONTAINER_NAME }}/LinkedTemplates \
+          --source ./Azure-DataFactory-Utilities/ARMTemplateGenerator/adf-arm-output/LinkedTemplates \
+          --auth-mode login
+
+    - name: Patch Main Template with Linked Template URIs (No SAS)
+      run: |
+        storageUrl="https://${{ secrets.STORAGE_ACCOUNT_NAME }}.blob.core.windows.net/${{ secrets.CONTAINER_NAME }}/LinkedTemplates"
+        jq --arg url "$storageUrl" '
+          .resources |= map(
+            if .type == "Microsoft.Resources/deployments" and .properties.templateLink then
+              .properties.templateLink.uri = ($url + "/" + (.properties.templateLink.uri | split("/") | last))
+            else
+              .
+            end
+          )
+        ' ./Azure-DataFactory-Utilities/ARMTemplateGenerator/adf-arm-output/ARMTemplateForFactory.json > ./main-template-patched.json
+
+    - name: Deploy Patched Template to Azure
       run: |
         az deployment group create \
-          --name "adf-deploy-$(date +%s)" \
-          --resource-group "${{ secrets.RESOURCE_GROUP }}" \
-          --template-file "${{ github.workspace }}/exported-arm/ARMTemplateForFactory.json" \
-          --parameters "@${{ github.workspace }}/exported-arm/ARMTemplateParametersForFactory.json"
+          --resource-group ${{ secrets.RESOURCE_GROUP }} \
+          --template-file ./main-template-patched.json \
+          --parameters "@./Azure-DataFactory-Utilities/ARMTemplateGenerator/adf-arm-output/ARMTemplateParametersForFactory.json"
