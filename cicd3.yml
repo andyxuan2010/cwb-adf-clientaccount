@@ -1,0 +1,25 @@
+
+- name: Process PUBLISH_PARAMETERS_* variables
+  shell: pwsh
+  run: |
+    # Step 1: Convert GitHub vars to JSON and parse into PowerShell object
+    $workflowVars = '${{ toJSON(vars) }}' | ConvertFrom-Json
+
+    # Step 2: Filter variables starting with "PUBLISH_PARAMETERS_"
+    $filteredVars = $workflowVars.PSObject.Properties | 
+      Where-Object { $_.Name -like "PUBLISH_PARAMETERS_*" }
+
+    # Step 3: Iterate through each variable
+    $filteredVars | ForEach-Object {
+      Write-Host "Variable: $($_.Name) = $($_.Value)"
+      
+      # Example: Use the value in a script
+      if ($_.Name -eq "PUBLISH_PARAMETERS_ENV") {
+        Write-Host "Deploying to environment: $($_.Value)"
+      }
+    }
+
+    # Optional: Convert to hashtable for easier access
+    $paramsHash = @{}
+    $filteredVars | ForEach-Object { $paramsHash[$_.Name] = $_.Value }
+    Write-Host "Hashtable: $($paramsHash | ConvertTo-Json)"
