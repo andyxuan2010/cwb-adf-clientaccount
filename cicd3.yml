@@ -23,3 +23,19 @@
     $paramsHash = @{}
     $filteredVars | ForEach-Object { $paramsHash[$_.Name] = $_.Value }
     Write-Host "Hashtable: $($paramsHash | ConvertTo-Json)"
+
+
+
+
+    # for sql
+    - name: Replace NuGet source
+  run: |
+    cat <<EOF > nuget.config
+    <?xml version="1.0" encoding="utf-8"?>
+    <configuration>
+      <packageSources>
+        <clear />
+        <add key="MyCustomFeed" value="https://your.custom.repo/index.json" />
+      </packageSources>
+    </configuration>
+    EOF
